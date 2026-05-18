@@ -54,7 +54,7 @@ Skipped if already installed.
 | Fix | File | Why |
 |---|---|---|
 | Screen tearing | `/usr/share/X11/xorg.conf.d/20-intel.conf` | Enables `TearFree` + `TripleBuffer` for Intel Arc modesetting driver |
-| WiFi stability | `/etc/modprobe.d/iwlmvm.conf` | `power_scheme=1` prevents Intel Wi-Fi 7 dropping after suspend |
+| WiFi resume | `/usr/lib/systemd/system-sleep/wifi-resume.sh` | Reloads `iwlmld` (Intel Wi-Fi 7 driver) and restarts NetworkManager after suspend. The system's `iwlwifi.sh` hook targets the wrong module (`iwlmvm`) for this hardware. |
 | Chrome apt warning | `/etc/apt/sources.list.d/google-chrome.sources` | Adds `Architectures: amd64` to suppress i386 fetch errors |
 | CPU governor | `/etc/systemd/system/cpu-performance.service` | Sets `performance` governor via systemd on boot |
 | Swappiness | `/etc/sysctl.d/99-performance.conf` | Reduces `vm.swappiness` from 60 → 10 |
