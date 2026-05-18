@@ -83,7 +83,7 @@ PACKAGES=(
     pulseaudio-utils
     dunst libnotify-bin
     brightnessctl
-    scrot curl unzip
+    scrot imagemagick curl unzip
     network-manager-gnome
     dmz-cursor-theme
     copyq
@@ -641,11 +641,12 @@ set $mod Mod4
 font pango:FiraCode Nerd Font Mono 11
 
 exec --no-startup-id dex --autostart --environment i3
-exec --no-startup-id xss-lock --transfer-sleep-lock -- i3lock --nofork
+exec --no-startup-id xss-lock --transfer-sleep-lock -- ~/.config/lockscreen.sh
 exec --no-startup-id nm-applet
 exec --no-startup-id autorandr --change
 exec --no-startup-id copyq
 exec --no-startup-id xsettingsd
+exec --no-startup-id ~/.config/lockscreen-update.sh
 
 exec_always --no-startup-id pkill -x picom; picom --config ~/.config/picom.conf
 exec_always --no-startup-id ~/.config/polybar/launch.sh
@@ -669,7 +670,7 @@ bindsym $mod+Shift+Return exec --no-startup-id bash -c 'pgrep -x firefox > /dev/
 bindsym $mod+Shift+q      kill
 bindsym $mod+d            exec --no-startup-id rofi -show drun
 bindsym $mod+Tab          exec --no-startup-id rofi -show window
-bindsym $mod+Shift+x      exec "i3lock -c 1a1b2e"
+bindsym $mod+Shift+x      exec --no-startup-id ~/.config/lockscreen.sh
 bindsym Print             exec --no-startup-id scrot ~/Pictures/screenshot-%Y-%m-%d-%H-%M-%S.png
 
 bindsym $mod+Left  focus left
@@ -769,6 +770,11 @@ workspace_auto_back_and_forth yes
 EOF
 }
 link_config "i3/config" "$HOME/.config/i3/config" write_i3
+
+# ── lockscreen ────────────────────────────────────────────────────────────────
+link_config "lockscreen.sh"        "$HOME/.config/lockscreen.sh"
+link_config "lockscreen-update.sh" "$HOME/.config/lockscreen-update.sh"
+chmod +x "$HOME/.config/lockscreen.sh" "$HOME/.config/lockscreen-update.sh"
 
 # ── dunst ─────────────────────────────────────────────────────────────────────
 link_config "dunst/dunstrc" "$HOME/.config/dunst/dunstrc"
