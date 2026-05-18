@@ -24,17 +24,14 @@ warn()  { printf '    \033[0;33mWARN\033[0m %s\n' "$*"; }
 NEEDS_REBOOT=0
 
 # ── Symlink helper ────────────────────────────────────────────────────────────
-# link_config <configs/-relative-path> <target-absolute-path> [write-function]
+# link_config <configs/-relative-path> <target-absolute-path>
 #
-# Priority:
-#   1. If configs/ file exists                → use it (write-function is skipped)
-#   2. If target real-file exists             → adopt it into configs/
-#   3. If write-function given               → call it to create configs/ file
+# If configs/ file exists       → use it
+# If target is a real file      → adopt it into configs/
 # Then symlink target → configs/ file.
 link_config() {
     local rel="$1"
     local target="$2"
-    local write_fn="${3:-}"
     local src="$CONFIGS_DIR/$rel"
 
     mkdir -p "$(dirname "$src")" "$(dirname "$target")"
@@ -43,9 +40,6 @@ link_config() {
         if [ -f "$target" ] && [ ! -L "$target" ]; then
             mv "$target" "$src"
             ok "  Adopted into configs/$rel"
-        elif [ -n "$write_fn" ]; then
-            "$write_fn" "$src"
-            ok "  Created  configs/$rel"
         else
             warn "  No source for configs/$rel — skipping"
             return
@@ -182,6 +176,25 @@ done
 if [ -f /etc/modprobe.d/iwlmvm.conf ]; then
     sudo rm -f /etc/modprobe.d/iwlmvm.conf
     ok "Removed stale iwlmvm.conf"
+fi
+
+step "WiFi reconnect speed — power save off + resume hook"
+# Disable NM's WiFi power save so the card doesn't doze between scans.
+NM_POWERSAVE=/etc/NetworkManager/conf.d/wifi-powersave.conf
+if [ -f "$NM_POWERSAVE" ] && grep -q 'wifi.powersave = 2' "$NM_POWERSAVE"; then
+    skip "Already applied"
+else
+    sudo mkdir -p /etc/NetworkManager/conf.d
+    printf '[connection]\nwifi.powersave = 2\n' | sudo tee "$NM_POWERSAVE" > /dev/null
+    ok "WiFi power save disabled"
+fi
+# Post-resume hook: immediately triggers NM reconnect instead of waiting for scan timer.
+RECONNECT_HOOK=/etc/systemd/system-sleep/wifi-reconnect.sh
+if [ -f "$RECONNECT_HOOK" ] && diff -q "$CONFIGS_DIR/wifi-reconnect.sh" "$RECONNECT_HOOK" > /dev/null 2>&1; then
+    skip "Reconnect hook already installed"
+else
+    sudo cp "$CONFIGS_DIR/wifi-reconnect.sh" "$RECONNECT_HOOK" && sudo chmod +x "$RECONNECT_HOOK"
+    ok "Reconnect hook installed"
 fi
 
 step "Chrome apt — suppress i386 warning"
@@ -357,5 +370,5 @@ echo
 echo "  configs/ layout:"
 find "$CONFIGS_DIR" -type f | sort | sed "s|$CONFIGS_DIR/||" | sed 's/^/    /'
 echo
-[ "$NEEDS_REBOOT" -eq 1 ] && echo "  Reboot for: screen tearing fix, WiFi sleep fix."
+[ "$NEEDS_REBOOT" -eq 1 ] && echo "  Reboot for: screen tearing fix."
 echo "  Keybinds: Mod+d (apps)  Mod+Tab (windows)  Mod+Return (terminal)  Print (screenshot)"
