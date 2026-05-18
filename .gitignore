@@ -1,0 +1,5 @@
+# Backups created by setup.sh when adopting existing files
+*.bak
+
+# polybar log files
+/tmp/polybar-*.log

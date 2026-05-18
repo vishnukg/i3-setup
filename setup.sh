@@ -1,0 +1,614 @@
+#!/bin/bash
+# i3 fresh-install bootstrap for Ubuntu / Linux Mint
+#
+# Single source of truth: all configs live in configs/ next to this script.
+# setup.sh installs packages, links configs/ into place, and applies system fixes.
+#
+# Usage on a fresh machine:
+#   git clone <your-repo> ~/.config/i3-setup
+#   ~/.config/i3-setup/setup.sh
+#   # Log out → select i3 session → log in → reboot
+#
+# Idempotent: safe to re-run.
+
+set -euo pipefail
+
+SETUP_DIR="$(dirname "$(realpath "$0")")"
+CONFIGS_DIR="$SETUP_DIR/configs"
+
+step()  { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
+ok()    { printf '    \033[0;32mOK\033[0m   %s\n' "$*"; }
+skip()  { printf '    \033[0;33mSKIP\033[0m %s\n' "$*"; }
+warn()  { printf '    \033[0;33mWARN\033[0m %s\n' "$*"; }
+
+NEEDS_REBOOT=0
+
+# ── Symlink helper ────────────────────────────────────────────────────────────
+# link_config <configs/-relative-path> <target-absolute-path> [write-function]
+#
+# Priority:
+#   1. If configs/ file exists                → use it (write-function is skipped)
+#   2. If target real-file exists             → adopt it into configs/
+#   3. If write-function given               → call it to create configs/ file
+# Then symlink target → configs/ file.
+link_config() {
+    local rel="$1"
+    local target="$2"
+    local write_fn="${3:-}"
+    local src="$CONFIGS_DIR/$rel"
+
+    mkdir -p "$(dirname "$src")" "$(dirname "$target")"
+
+    if [ ! -f "$src" ]; then
+        if [ -f "$target" ] && [ ! -L "$target" ]; then
+            mv "$target" "$src"
+            ok "  Adopted into configs/$rel"
+        elif [ -n "$write_fn" ]; then
+            "$write_fn" "$src"
+            ok "  Created  configs/$rel"
+        else
+            warn "  No source for configs/$rel — skipping"
+            return
+        fi
+    elif [ -f "$target" ] && [ ! -L "$target" ]; then
+        mv "$target" "$target.bak"
+        warn "  Backed up $target → $target.bak"
+    fi
+
+    local src_real target_real
+    src_real="$(realpath "$src")"
+    target_real="$(readlink -f "$target" 2>/dev/null || true)"
+
+    if [ -L "$target" ] && [ "$target_real" = "$src_real" ]; then
+        skip "  Already linked: $rel"
+    else
+        ln -sf "$src" "$target"
+        ok "  Linked $target"
+    fi
+}
+
+# ════════════════════════════════════════════════════════════════════════════
+# 1. PACKAGES
+# ════════════════════════════════════════════════════════════════════════════
+step "Packages"
+
+PACKAGES=(
+    i3 i3status i3lock xss-lock dex
+    xorg xinit x11-xserver-utils
+    picom
+    autorandr arandr
+    nitrogen
+    polybar rofi
+    xfce4-terminal
+    pulseaudio-utils
+    dunst libnotify-bin
+    brightnessctl
+    scrot curl unzip
+    network-manager-gnome
+)
+
+MISSING=()
+for pkg in "${PACKAGES[@]}"; do
+    dpkg -s "$pkg" &>/dev/null || MISSING+=("$pkg")
+done
+
+if [ "${#MISSING[@]}" -eq 0 ]; then
+    skip "All packages already installed"
+else
+    echo "    Installing: ${MISSING[*]}"
+    sudo apt-get update -qq
+    sudo apt-get install -y "${MISSING[@]}"
+    ok "Installed"
+fi
+
+# ════════════════════════════════════════════════════════════════════════════
+# 2. FIRACODE NERD FONT
+# ════════════════════════════════════════════════════════════════════════════
+step "FiraCode Nerd Font"
+
+FONT_DIR="$HOME/.local/share/fonts/FiraCode"
+
+if ls "$FONT_DIR"/*.ttf &>/dev/null; then
+    skip "Already installed"
+else
+    mkdir -p "$FONT_DIR"
+    curl -L --progress-bar \
+        "https://github.com/ryanoasis/nerd-fonts/releases/latest/download/FiraCode.zip" \
+        -o /tmp/FiraCode-nerd.zip
+    unzip -q -o /tmp/FiraCode-nerd.zip "*.ttf" -d "$FONT_DIR"
+    rm /tmp/FiraCode-nerd.zip
+    fc-cache -f "$FONT_DIR"
+    ok "Installed to $FONT_DIR"
+fi
+
+# ════════════════════════════════════════════════════════════════════════════
+# 3. SYSTEM FIXES  (require sudo)
+# ════════════════════════════════════════════════════════════════════════════
+
+step "Screen tearing — 20-intel.conf (Intel Arc / modesetting)"
+XORG_CONF=/usr/share/X11/xorg.conf.d/20-intel.conf
+if [ -f "$XORG_CONF" ] && grep -q 'TearFree' "$XORG_CONF"; then
+    skip "Already applied"
+else
+    sudo tee "$XORG_CONF" > /dev/null << 'EOF'
+Section "Device"
+  Identifier "Intel Graphics"
+  Driver "modesetting"
+  Option "TearFree" "true"
+  Option "TripleBuffer" "true"
+  Option "DRI" "iris"
+EndSection
+EOF
+    ok "Written — reboot required"; NEEDS_REBOOT=1
+fi
+
+step "WiFi sleep — iwlmvm power_scheme=1 (Intel Wi-Fi 7)"
+MODPROBE_CONF=/etc/modprobe.d/iwlmvm.conf
+if [ -f "$MODPROBE_CONF" ] && grep -q 'power_scheme=1' "$MODPROBE_CONF"; then
+    skip "Already applied"
+else
+    echo "options iwlmvm power_scheme=1" | sudo tee "$MODPROBE_CONF" > /dev/null
+    ok "Written — reboot required"; NEEDS_REBOOT=1
+fi
+
+step "Chrome apt — suppress i386 warning"
+CHROME_SOURCES=/etc/apt/sources.list.d/google-chrome.sources
+if [ ! -f "$CHROME_SOURCES" ]; then
+    skip "google-chrome.sources not found"
+elif grep -q 'Architectures:' "$CHROME_SOURCES"; then
+    skip "Already applied"
+else
+    sudo sed -i 's/^Types: deb$/Types: deb\nArchitectures: amd64/' "$CHROME_SOURCES"
+    ok "Added Architectures: amd64"
+fi
+
+# ════════════════════════════════════════════════════════════════════════════
+# 4. CONFIG FILES  (symlinked from configs/)
+# ════════════════════════════════════════════════════════════════════════════
+step "Config symlinks — configs/ → ~/.config/"
+
+# ── .Xresources ──────────────────────────────────────────────────────────────
+write_xresources() {
+    cat > "$1" << 'EOF'
+Xft.dpi: 144
+Xft.autohint: 0
+Xft.lcdfilter: lcddefault
+Xft.hintstyle: hintfull
+Xft.hinting: 1
+Xft.antialias: 1
+Xft.rgba: rgb
+Xcursor.size:48
+EOF
+}
+link_config ".Xresources" "$HOME/.Xresources" write_xresources
+xrdb "$HOME/.Xresources" 2>/dev/null || true
+
+# ── picom ─────────────────────────────────────────────────────────────────────
+write_picom() {
+    cat > "$1" << 'EOF'
+# picom config — Intel Arc (Meteor Lake), xrender backend
+# Switch backend = "glx" after verifying no pink-line artifacts post-reboot
+# to activate rounded corners.
+
+backend        = "xrender";
+vsync          = true;
+use-damage     = false;
+glx-no-stencil = true;
+
+corner-radius  = 10;
+rounded-corners-exclude = [
+    "window_type = 'dock'",
+    "window_type = 'desktop'"
+];
+
+shadow          = true;
+shadow-radius   = 7;
+shadow-offset-x = -7;
+shadow-offset-y = -7;
+shadow-exclude  = [
+    "name = 'Notification'",
+    "class_g = 'Conky'",
+    "class_g ?= 'Notify-osd'",
+    "_GTK_FRAME_EXTENTS@:c",
+    "name = 'cpt_frame_window'"
+];
+
+fading                = false;
+frame-opacity         = 0.9;
+inactive-opacity      = 1;
+inactive-opacity-override = false;
+detect-rounded-corners    = true;
+detect-client-opacity     = true;
+detect-transient          = true;
+detect-client-leader      = true;
+mark-wmwin-focused        = true;
+mark-ovredir-focused      = true;
+log-level = "warn";
+
+wintypes: {
+    dock    = { shadow = false; };
+    dnd     = { shadow = false; };
+    tooltip = { shadow = false; fade = false; };
+};
+EOF
+}
+link_config "picom.conf" "$HOME/.config/picom.conf" write_picom
+
+if pgrep -x picom > /dev/null 2>&1; then
+    pkill -x picom; sleep 0.3
+    picom --config "$HOME/.config/picom.conf" &
+    ok "  picom restarted"
+fi
+
+# ── autorandr external monitor ───────────────────────────────────────────────
+AUTORANDR_EXT="$HOME/.config/autorandr/external/config"
+if [ -f "$AUTORANDR_EXT" ] && ! grep -q 'broadcast_rgb Full' "$AUTORANDR_EXT"; then
+    sed -i 's/x-prop-broadcast_rgb Automatic/x-prop-broadcast_rgb Full/' "$AUTORANDR_EXT"
+    ok "  autorandr external: broadcast_rgb → Full"
+fi
+
+# ── polybar ───────────────────────────────────────────────────────────────────
+WLAN_IFACE=$(ip -o link show 2>/dev/null | awk '$2 ~ /^w/ {gsub(/:/, "", $2); print $2; exit}')
+WLAN_IFACE=${WLAN_IFACE:-wlan0}
+BATTERY=$(ls /sys/class/power_supply/ 2>/dev/null | grep -i bat | head -1); BATTERY=${BATTERY:-BAT0}
+BACKLIGHT=$(ls /sys/class/backlight/ 2>/dev/null | head -1); BACKLIGHT=${BACKLIGHT:-intel_backlight}
+
+write_polybar_config() {
+    cat > "$1" << EOF
+# Nord theme — auto-generated by setup.sh
+# wlan=$WLAN_IFACE  battery=$BATTERY  backlight=$BACKLIGHT
+[colors]
+bg       = #cc2e3440
+bg-alt   = #cc3b4252
+fg       = #d8dee9
+fg-dim   = #4c566a
+blue     = #88c0d0
+blue-alt = #81a1c1
+red      = #bf616a
+green    = #a3be8c
+
+[bar/main]
+width                 = 100%
+height                = 34
+background            = \${colors.bg}
+foreground            = \${colors.fg}
+line-size             = 2
+border-size           = 0
+padding-left          = 2
+padding-right         = 2
+module-margin-right   = 1
+font-0                = FiraCode Nerd Font Mono:size=11;3
+font-1                = FiraCode Nerd Font Mono:size=15;4
+modules-left          = i3
+modules-center        = date
+modules-right         = pulseaudio backlight battery wlan cpu memory tray
+wm-restack            = i3
+override-redirect     = false
+cursor-click          = pointer
+cursor-scroll         = ns-resize
+enable-ipc            = true
+
+[module/i3]
+type                         = internal/i3
+format                       = <label-state> <label-mode>
+index-sort                   = true
+wrapping-scroll              = false
+strip-wsnumbers              = true
+label-mode-padding           = 2
+label-mode-foreground        = \${colors.bg}
+label-mode-background        = \${colors.blue}
+label-focused                = %name%
+label-focused-foreground     = \${colors.bg}
+label-focused-background     = \${colors.blue}
+label-focused-padding        = 2
+label-unfocused              = %name%
+label-unfocused-foreground   = \${colors.fg-dim}
+label-unfocused-padding      = 2
+label-visible                = %name%
+label-visible-foreground     = \${colors.fg-dim}
+label-visible-underline      = \${colors.blue-alt}
+label-visible-padding        = 2
+label-urgent                 = %name%
+label-urgent-foreground      = \${colors.bg}
+label-urgent-background      = \${colors.red}
+label-urgent-padding         = 2
+
+[module/date]
+type   = internal/date
+interval = 5
+date   = %a %d %b
+time   = %H:%M
+label  =  %date%    %time%
+
+[module/pulseaudio]
+type                   = internal/pulseaudio
+use-ui-max             = false
+format-volume          = <ramp-volume> <label-volume>
+label-volume           = %percentage%%
+label-muted            =  muted
+label-muted-foreground = \${colors.fg-dim}
+ramp-volume-0          =
+ramp-volume-1          =
+ramp-volume-2          =
+ramp-volume-foreground = \${colors.blue}
+
+[module/backlight]
+type                  = internal/backlight
+card                  = $BACKLIGHT
+use-actual-brightness = true
+enable-scroll         = true
+format                = <ramp> <label>
+label                 = %percentage%%
+ramp-0                = 󰃞
+ramp-1                = 󰃟
+ramp-2                = 󰃠
+ramp-foreground       = \${colors.blue}
+
+[module/wlan]
+type                          = internal/network
+interface                     = $WLAN_IFACE
+interval                      = 5
+label-connected               =  %essid%
+label-disconnected            =  --
+label-disconnected-foreground = \${colors.fg-dim}
+
+[module/battery]
+type                          = internal/battery
+battery                       = $BATTERY
+adapter                       = AC
+full-at                       = 99
+low-at                        = 10
+poll-interval                 = 10
+format-charging               = <animation-charging> <label-charging>
+format-discharging            = <ramp-capacity> <label-discharging>
+format-full                   = <label-full>
+format-low                    = <ramp-capacity> <label-low>
+label-charging                = %percentage%%
+label-discharging             = %percentage%%
+label-full                    =  Full
+label-low                     = %percentage%%
+label-low-foreground          = \${colors.red}
+ramp-capacity-0               =
+ramp-capacity-1               =
+ramp-capacity-2               =
+ramp-capacity-3               =
+ramp-capacity-4               =
+ramp-capacity-foreground      = \${colors.blue}
+animation-charging-0          =
+animation-charging-1          =
+animation-charging-2          =
+animation-charging-3          =
+animation-charging-4          =
+animation-charging-foreground = \${colors.green}
+animation-charging-framerate  = 750
+
+[module/cpu]
+type                     = internal/cpu
+interval                 = 2
+format-prefix            = "󰍛 "
+format-prefix-foreground = \${colors.blue}
+label                    = %percentage:2%%
+
+[module/memory]
+type                     = internal/memory
+interval                 = 3
+format-prefix            = "󰾆 "
+format-prefix-foreground = \${colors.blue}
+label                    = %percentage_used:2%%
+
+[module/tray]
+type         = internal/tray
+tray-padding = 6px
+tray-maxsize = 20
+EOF
+}
+
+write_polybar_launch() {
+    cat > "$1" << 'EOF'
+#!/bin/bash
+killall -q polybar
+while pgrep -u "$UID" -x polybar > /dev/null; do sleep 0.1; done
+for m in $(xrandr --query | grep " connected" | cut -d" " -f1); do
+    MONITOR="$m" polybar --reload main 2>&1 | tee -a /tmp/polybar-"$m".log &
+done
+EOF
+    chmod +x "$1"
+}
+
+link_config "polybar/config.ini" "$HOME/.config/polybar/config.ini" write_polybar_config
+link_config "polybar/launch.sh"  "$HOME/.config/polybar/launch.sh"  write_polybar_launch
+
+# ── rofi ──────────────────────────────────────────────────────────────────────
+write_rofi() {
+    cat > "$1" << 'EOF'
+/* Nord theme */
+configuration {
+    modi:               "drun,window,run";
+    font:               "FiraCode Nerd Font Mono 13";
+    show-icons:         true;
+    drun-display-format: "{icon} {name}";
+    display-drun:       "  Apps";
+    display-window:     "  Windows";
+    display-run:        "  Run";
+    sidebar-mode:       true;
+}
+
+* {
+    bg:       #2e3440;  bg-alt: #3b4252;
+    fg:       #d8dee9;  fg-dim: #4c566a;
+    selected: #88c0d0;  urgent: #bf616a;
+    background-color: @bg;  text-color: @fg;  border-color: @selected;
+}
+
+window {
+    background-color: @bg;  border: 2px;  border-radius: 10px;
+    border-color: @selected;  padding: 8px;  width: 38%;
+}
+mainbox  { background-color: transparent; children: [inputbar, listview, mode-switcher]; spacing: 8px; padding: 8px; }
+inputbar { background-color: @bg-alt; border-radius: 8px; padding: 10px 12px; spacing: 8px; children: [prompt, entry]; }
+prompt   { text-color: @selected; }
+entry    { text-color: @fg; placeholder: "Search…"; placeholder-color: @fg-dim; }
+listview { background-color: transparent; border: 0; spacing: 2px; scrollbar: false; padding: 2px 0; }
+element  { background-color: transparent; border-radius: 6px; padding: 8px 10px; spacing: 8px; children: [element-icon, element-text]; }
+element-icon { size: 22px; }
+element-text { text-color: inherit; }
+element.normal.normal   { background-color: transparent; text-color: @fg; }
+element.selected.normal { background-color: @selected;   text-color: @bg; }
+element.normal.urgent   { background-color: @urgent;     text-color: @bg; }
+element.selected.urgent { background-color: @urgent;     text-color: @bg; }
+mode-switcher  { background-color: @bg-alt; border-radius: 8px; spacing: 0; }
+button         { padding: 6px 14px; background-color: transparent; text-color: @fg-dim; border-radius: 8px; }
+button.selected { background-color: @selected; text-color: @bg; }
+EOF
+}
+link_config "rofi/config.rasi" "$HOME/.config/rofi/config.rasi" write_rofi
+
+# ── i3 config ─────────────────────────────────────────────────────────────────
+write_i3() {
+    cat > "$1" << 'EOF'
+# i3 config — Nord theme
+# Managed by ~/.config/i3-setup/setup.sh
+
+set $mod Mod4
+
+font pango:FiraCode Nerd Font Mono 11
+
+exec --no-startup-id dex --autostart --environment i3
+exec --no-startup-id xss-lock --transfer-sleep-lock -- i3lock --nofork
+exec --no-startup-id nm-applet
+exec --no-startup-id autorandr --change
+
+exec_always --no-startup-id pkill -x picom; picom --config ~/.config/picom.conf
+exec_always --no-startup-id ~/.config/polybar/launch.sh
+exec_always --no-startup-id /usr/bin/setxkbmap -option "ctrl:nocaps"
+exec_always nitrogen --restore
+exec_always --no-startup-id xset r rate 200 35
+
+set $refresh_i3status killall -SIGUSR1 i3status
+bindsym XF86AudioRaiseVolume exec --no-startup-id pactl set-sink-volume @DEFAULT_SINK@ +5% && $refresh_i3status
+bindsym XF86AudioLowerVolume exec --no-startup-id pactl set-sink-volume @DEFAULT_SINK@ -5% && $refresh_i3status
+bindsym XF86AudioMute        exec --no-startup-id pactl set-sink-mute @DEFAULT_SINK@ toggle && $refresh_i3status
+bindsym XF86AudioMicMute     exec --no-startup-id pactl set-source-mute @DEFAULT_SOURCE@ toggle && $refresh_i3status
+bindsym XF86MonBrightnessDown exec --no-startup-id brightnessctl --min-val=2 -q set 5%-
+bindsym XF86MonBrightnessUp   exec --no-startup-id brightnessctl -q set 5%+
+
+floating_modifier $mod
+tiling_drag modifier titlebar
+
+bindsym $mod+Return       exec xfce4-terminal
+bindsym $mod+Shift+Return exec firefox
+bindsym $mod+Shift+q      kill
+bindsym $mod+d            exec --no-startup-id rofi -show drun
+bindsym $mod+Tab          exec --no-startup-id rofi -show window
+bindsym $mod+Shift+x      exec "i3lock -c 1a1b2e"
+bindsym Print             exec --no-startup-id scrot ~/Pictures/screenshot-%Y-%m-%d-%H-%M-%S.png
+
+bindsym $mod+Left  focus left
+bindsym $mod+Down  focus down
+bindsym $mod+Up    focus up
+bindsym $mod+Right focus right
+bindsym $mod+j     focus left
+bindsym $mod+k     focus down
+bindsym $mod+l     focus up
+bindsym $mod+semicolon focus right
+
+bindsym $mod+Shift+Left  move left
+bindsym $mod+Shift+Down  move down
+bindsym $mod+Shift+Up    move up
+bindsym $mod+Shift+Right move right
+bindsym $mod+Shift+j     move left
+bindsym $mod+Shift+k     move down
+bindsym $mod+Shift+l     move up
+bindsym $mod+Shift+semicolon move right
+
+bindsym $mod+h           split h
+bindsym $mod+v           split v
+bindsym $mod+f           fullscreen toggle
+bindsym $mod+s           layout stacking
+bindsym $mod+w           layout tabbed
+bindsym $mod+e           layout toggle split
+bindsym $mod+Shift+space floating toggle
+bindsym $mod+space       focus mode_toggle
+bindsym $mod+a           focus parent
+
+set $ws1 "1"
+set $ws2 "2"
+set $ws3 "3"
+set $ws4 "4"
+set $ws5 "5"
+set $ws6 "6"
+set $ws7 "7"
+set $ws8 "8"
+set $ws9 "9"
+set $ws10 "10"
+
+bindsym $mod+1 workspace number $ws1
+bindsym $mod+2 workspace number $ws2
+bindsym $mod+3 workspace number $ws3
+bindsym $mod+4 workspace number $ws4
+bindsym $mod+5 workspace number $ws5
+bindsym $mod+6 workspace number $ws6
+bindsym $mod+7 workspace number $ws7
+bindsym $mod+8 workspace number $ws8
+bindsym $mod+9 workspace number $ws9
+bindsym $mod+0 workspace number $ws10
+
+bindsym $mod+Shift+1 move container to workspace number $ws1
+bindsym $mod+Shift+2 move container to workspace number $ws2
+bindsym $mod+Shift+3 move container to workspace number $ws3
+bindsym $mod+Shift+4 move container to workspace number $ws4
+bindsym $mod+Shift+5 move container to workspace number $ws5
+bindsym $mod+Shift+6 move container to workspace number $ws6
+bindsym $mod+Shift+7 move container to workspace number $ws7
+bindsym $mod+Shift+8 move container to workspace number $ws8
+bindsym $mod+Shift+9 move container to workspace number $ws9
+bindsym $mod+Shift+0 move container to workspace number $ws10
+
+bindsym $mod+Shift+c reload
+bindsym $mod+Shift+r restart
+bindsym $mod+Shift+e exec "i3-nagbar -t warning -m 'Exit i3?' -B 'Yes, exit' 'i3-msg exit'"
+
+mode "resize" {
+    bindsym Left       resize shrink width  10 px or 10 ppt
+    bindsym Down       resize grow   height 10 px or 10 ppt
+    bindsym Up         resize shrink height 10 px or 10 ppt
+    bindsym Right      resize grow   width  10 px or 10 ppt
+    bindsym j          resize shrink width  10 px or 10 ppt
+    bindsym k          resize grow   height 10 px or 10 ppt
+    bindsym l          resize shrink height 10 px or 10 ppt
+    bindsym semicolon  resize grow   width  10 px or 10 ppt
+    bindsym Return mode "default"
+    bindsym Escape mode "default"
+    bindsym $mod+r mode "default"
+}
+bindsym $mod+r mode "resize"
+
+gaps inner 10
+gaps outer 4
+
+default_border pixel 2
+default_floating_border pixel 2
+
+#                       border    bg        text      indicator child_border
+client.focused          #88c0d0   #3b4252   #eceff4   #88c0d0   #88c0d0
+client.focused_inactive #4c566a   #2e3440   #d8dee9   #4c566a   #4c566a
+client.unfocused        #3b4252   #2e3440   #4c566a   #3b4252   #3b4252
+client.urgent           #bf616a   #2e3440   #eceff4   #bf616a   #bf616a
+client.background       #2e3440
+
+workspace_auto_back_and_forth yes
+EOF
+}
+link_config "i3/config" "$HOME/.config/i3/config" write_i3
+
+# ════════════════════════════════════════════════════════════════════════════
+# SUMMARY
+# ════════════════════════════════════════════════════════════════════════════
+echo
+printf '\033[1;32m==> Done.\033[0m\n'
+echo
+echo "  configs/ layout:"
+find "$CONFIGS_DIR" -type f | sort | sed "s|$CONFIGS_DIR/||" | sed 's/^/    /'
+echo
+[ "$NEEDS_REBOOT" -eq 1 ] && echo "  Reboot for: screen tearing fix, WiFi sleep fix."
+echo "  Keybinds: Mod+d (apps)  Mod+Tab (windows)  Mod+Return (terminal)  Print (screenshot)"

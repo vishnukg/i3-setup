@@ -1,0 +1,78 @@
+/* Nord theme */
+configuration {
+    modi:               "drun,window,run";
+    font:               "FiraCode Nerd Font Mono 13";
+    show-icons:         true;
+    drun-display-format: "{icon} {name}";
+    display-drun:       "  Apps";
+    display-window:     "  Windows";
+    display-run:        "  Run";
+    sidebar-mode:       true;
+}
+
+* {
+    bg:       #2e3440;
+    bg-alt:   #3b4252;
+    fg:       #d8dee9;
+    fg-dim:   #4c566a;
+    selected: #88c0d0;
+    urgent:   #bf616a;
+    background-color: @bg;
+    text-color:       @fg;
+    border-color:     @selected;
+}
+
+window {
+    background-color: @bg;
+    border:           2px;
+    border-radius:    10px;
+    border-color:     @selected;
+    padding:          8px;
+    width:            38%;
+}
+
+mainbox {
+    background-color: transparent;
+    children:         [ inputbar, listview, mode-switcher ];
+    spacing:          8px;
+    padding:          8px;
+}
+
+inputbar {
+    background-color: @bg-alt;
+    border-radius:    8px;
+    padding:          10px 12px;
+    spacing:          8px;
+    children:         [ prompt, entry ];
+}
+
+prompt { text-color: @selected; }
+entry  { text-color: @fg; placeholder: "Search…"; placeholder-color: @fg-dim; }
+
+listview {
+    background-color: transparent;
+    border:           0;
+    spacing:          2px;
+    scrollbar:        false;
+    padding:          2px 0;
+}
+
+element {
+    background-color: transparent;
+    border-radius:    6px;
+    padding:          8px 10px;
+    spacing:          8px;
+    children:         [ element-icon, element-text ];
+}
+
+element-icon          { size: 22px; }
+element-text          { text-color: inherit; }
+
+element.normal.normal   { background-color: transparent; text-color: @fg; }
+element.selected.normal { background-color: @selected;   text-color: @bg; }
+element.normal.urgent   { background-color: @urgent;     text-color: @bg; }
+element.selected.urgent { background-color: @urgent;     text-color: @bg; }
+
+mode-switcher           { background-color: @bg-alt; border-radius: 8px; spacing: 0; }
+button                  { padding: 6px 14px; background-color: transparent; text-color: @fg-dim; border-radius: 8px; }
+button.selected         { background-color: @selected; text-color: @bg; }
