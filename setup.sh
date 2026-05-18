@@ -131,7 +131,10 @@ fi
 # ════════════════════════════════════════════════════════════════════════════
 
 step "Screen tearing — 20-intel.conf (Intel Arc / modesetting)"
-XORG_CONF=/usr/share/X11/xorg.conf.d/20-intel.conf
+# /etc/X11/xorg.conf.d/ is the admin-managed location; survives package updates.
+# /usr/share/X11/xorg.conf.d/ is package-managed and can be overwritten on upgrade.
+XORG_CONF=/etc/X11/xorg.conf.d/20-intel.conf
+sudo mkdir -p /etc/X11/xorg.conf.d
 if [ -f "$XORG_CONF" ] && grep -q 'TearFree' "$XORG_CONF"; then
     skip "Already applied"
 else
@@ -146,25 +149,39 @@ EndSection
 EOF
     ok "Written — reboot required"; NEEDS_REBOOT=1
 fi
+# Clean up old location if it exists (was previously written there)
+if [ -f /usr/share/X11/xorg.conf.d/20-intel.conf ]; then
+    sudo rm -f /usr/share/X11/xorg.conf.d/20-intel.conf
+    ok "Removed old /usr/share/X11/xorg.conf.d/20-intel.conf"
+fi
 
-step "WiFi resume — iwlmld hook (Intel Wi-Fi 7)"
-# Intel Wi-Fi 7 uses iwlmld driver. The system's iwlwifi.sh hook incorrectly
-# tries to reload iwlmvm (old driver), breaking WiFi after suspend.
-# This hook reloads iwlmld and restarts NetworkManager after resume.
-WIFI_HOOK=/usr/lib/systemd/system-sleep/wifi-resume.sh
-if [ -f "$WIFI_HOOK" ] && diff -q "$CONFIGS_DIR/wifi-resume.sh" "$WIFI_HOOK" > /dev/null 2>&1; then
+step "WiFi D3cold fix — Intel BE200 (iwlmld)"
+# BE200 enters PCIe D3cold during suspend; firmware can't reinitialise on resume.
+# Udev rule keeps d3cold_allowed=0 from boot so device stays in D3hot across sleep.
+# Device ID 8086:272b = Intel BE200. Noop on other hardware.
+WIFI_UDEV=/etc/udev/rules.d/10-intel-wifi-d3cold.rules
+WIFI_UDEV_RULE='ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x8086", ATTR{device}=="0x272b", ATTR{d3cold_allowed}="0"'
+if [ -f "$WIFI_UDEV" ] && grep -qF "$WIFI_UDEV_RULE" "$WIFI_UDEV"; then
     skip "Already installed"
 else
-    if sudo cp "$CONFIGS_DIR/wifi-resume.sh" "$WIFI_HOOK" && sudo chmod +x "$WIFI_HOOK"; then
-        ok "Installed"
-    else
-        warn "Could not install wifi resume hook"
-    fi
+    echo "$WIFI_UDEV_RULE" | sudo tee "$WIFI_UDEV" > /dev/null
+    sudo udevadm control --reload
+    ok "Installed"
 fi
+# Apply immediately without reboot
+WIFI_PCI=$(lspci -D 2>/dev/null | awk '/Network controller.*Intel/{print $1; exit}')
+if [ -n "$WIFI_PCI" ] && [ -e "/sys/bus/pci/devices/$WIFI_PCI" ]; then
+    sudo udevadm trigger --action=add "/sys/bus/pci/devices/$WIFI_PCI"
+    ok "d3cold_allowed=0 applied to $WIFI_PCI"
+fi
+# Clean up old sleep hooks (no longer needed)
+for _old in /etc/systemd/system-sleep/wifi-resume.sh /usr/lib/systemd/system-sleep/wifi-resume.sh; do
+    [ -f "$_old" ] && sudo rm -f "$_old" && ok "Removed $_old"
+done
 # Remove stale iwlmvm modprobe config (wrong driver for this hardware)
 if [ -f /etc/modprobe.d/iwlmvm.conf ]; then
     sudo rm -f /etc/modprobe.d/iwlmvm.conf
-    ok "Removed stale iwlmvm.conf (driver is iwlmld)"
+    ok "Removed stale iwlmvm.conf"
 fi
 
 step "Chrome apt — suppress i386 warning"
@@ -195,7 +212,8 @@ else
 fi
 
 step "picom resume hook — restart compositor after suspend"
-PICOM_HOOK=/usr/lib/systemd/system-sleep/picom-resume.sh
+PICOM_HOOK=/etc/systemd/system-sleep/picom-resume.sh
+sudo mkdir -p /etc/systemd/system-sleep
 if [ -f "$PICOM_HOOK" ] && diff -q "$CONFIGS_DIR/picom-resume.sh" "$PICOM_HOOK" > /dev/null 2>&1; then
     skip "Already installed"
 else
@@ -204,6 +222,11 @@ else
     else
         warn "Could not install picom resume hook — run setup.sh with sudo access"
     fi
+fi
+# Clean up old location if it exists
+if [ -f /usr/lib/systemd/system-sleep/picom-resume.sh ]; then
+    sudo rm -f /usr/lib/systemd/system-sleep/picom-resume.sh
+    ok "Removed old /usr/lib/systemd/system-sleep/picom-resume.sh"
 fi
 
 step "Swappiness — reduce to 10 (was 60)"
