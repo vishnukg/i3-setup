@@ -21,12 +21,12 @@ try:
         name = ws["name"]
         click = f"i3-msg workspace \"{name}\""
         if ws["focused"]:
-            parts.append(f"%{{B{color}}}%{{F{text}}}%{{A1:{click}:}} {name} %{{A}}%{{B-}}%{{F-}}")
+            parts.append(f"%{{B{color}}}%{{F{text}}}%{{A1:{click}:}}%{{O12}}{name}%{{O12}}%{{A}}%{{B-}}%{{F-}}")
         elif ws["urgent"]:
-            parts.append(f"%{{B#f9e2af}}%{{F{text}}}%{{A1:{click}:}} {name} %{{A}}%{{B-}}%{{F-}}")
+            parts.append(f"%{{B#f9e2af}}%{{F{text}}}%{{A1:{click}:}}%{{O12}}{name}%{{O12}}%{{A}}%{{B-}}%{{F-}}")
         else:
-            parts.append(f"%{{B{dim(color)}}}%{{F{text}}}%{{A1:{click}:}} {name} %{{A}}%{{B-}}%{{F-}}")
-    print("".join(parts))
+            parts.append(f"%{{B{dim(color)}}}%{{F{text}}}%{{A1:{click}:}}%{{O12}}{name}%{{O12}}%{{A}}%{{B-}}%{{F-}}")
+    print("%{O6}".join(parts))
 except (json.JSONDecodeError, KeyError):
     pass
 '

@@ -85,6 +85,11 @@ PACKAGES=(
     brightnessctl
     scrot curl unzip
     network-manager-gnome
+    dmz-cursor-theme
+    copyq
+    arc-theme papirus-icon-theme
+    xsettingsd
+    power-profiles-daemon
 )
 
 MISSING=()
@@ -162,25 +167,18 @@ else
     ok "Added Architectures: amd64"
 fi
 
-step "CPU governor — performance (intel_pstate)"
+step "CPU governor — power-profiles-daemon (auto-switches on AC/battery)"
 CPU_SVC=/etc/systemd/system/cpu-performance.service
-if [ -f "$CPU_SVC" ] && grep -q 'performance' "$CPU_SVC"; then
-    skip "Already applied"
+if [ -f "$CPU_SVC" ]; then
+    sudo systemctl disable --now cpu-performance.service 2>/dev/null || true
+    sudo rm -f "$CPU_SVC"
+    ok "Removed static performance governor service"
+fi
+if systemctl is-active --quiet power-profiles-daemon; then
+    skip "power-profiles-daemon already running"
 else
-    sudo tee "$CPU_SVC" > /dev/null << 'EOF'
-[Unit]
-Description=Set CPU governor to performance
-After=multi-user.target
-
-[Service]
-Type=oneshot
-ExecStart=/bin/sh -c 'echo performance | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor'
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    sudo systemctl enable --now cpu-performance.service
-    ok "CPU governor set to performance"; NEEDS_REBOOT=1
+    sudo systemctl enable --now power-profiles-daemon
+    ok "power-profiles-daemon enabled"
 fi
 
 step "Swappiness — reduce to 10 (was 60)"
@@ -208,7 +206,8 @@ Xft.hintstyle: hintfull
 Xft.hinting: 1
 Xft.antialias: 1
 Xft.rgba: rgb
-Xcursor.size:48
+Xcursor.theme: DMZ-White
+Xcursor.size: 48
 EOF
 }
 link_config ".Xresources" "$HOME/.Xresources" write_xresources
@@ -263,9 +262,12 @@ wintypes: {
 };
 EOF
 }
+_picom_linked=0
+{ [ ! -L "$HOME/.config/picom.conf" ] || \
+  [ "$(readlink -f "$HOME/.config/picom.conf" 2>/dev/null)" != "$(realpath "$CONFIGS_DIR/picom.conf")" ]; } \
+  && _picom_linked=1
 link_config "picom.conf" "$HOME/.config/picom.conf" write_picom
-
-if pgrep -x picom > /dev/null 2>&1; then
+if [ "$_picom_linked" -eq 1 ] && pgrep -x picom > /dev/null 2>&1; then
     pkill -x picom; sleep 0.3
     picom --config "$HOME/.config/picom.conf" &
     ok "  picom restarted"
@@ -281,8 +283,10 @@ fi
 # ── polybar ───────────────────────────────────────────────────────────────────
 WLAN_IFACE=$(ip -o link show 2>/dev/null | awk '$2 ~ /^w/ {gsub(/:/, "", $2); print $2; exit}')
 WLAN_IFACE=${WLAN_IFACE:-wlan0}
-BATTERY=$(ls /sys/class/power_supply/ 2>/dev/null | grep -i bat | head -1); BATTERY=${BATTERY:-BAT0}
-BACKLIGHT=$(ls /sys/class/backlight/ 2>/dev/null | head -1); BACKLIGHT=${BACKLIGHT:-intel_backlight}
+BATTERY=$(ls /sys/class/power_supply/ 2>/dev/null | grep -i bat | head -1)
+BATTERY=${BATTERY:-BAT0}
+BACKLIGHT=$(ls /sys/class/backlight/ 2>/dev/null | head -1)
+BACKLIGHT=${BACKLIGHT:-intel_backlight}
 
 write_polybar_config() {
     cat > "$1" << EOF
@@ -309,9 +313,9 @@ border-size           = 0
 padding-left          = 2
 padding-right         = 2
 module-margin-right   = 1
-font-0                = FiraCode Nerd Font Mono:style=Bold:size=19;5
-font-1                = FiraCode Nerd Font Mono:size=12;4
-font-2                = FiraCode Nerd Font Mono:style=Bold:size=18;6
+font-0                = FiraCode Nerd Font Mono:style=Bold:size=22;6
+font-1                = FiraCode Nerd Font Mono:size=15;5
+font-2                = FiraCode Nerd Font Mono:style=Bold:size=21;6
 modules-left          = workspaces
 modules-center        =
 modules-right         = pulseaudio backlight battery wlan cpu memory tray date
@@ -453,12 +457,12 @@ try:
         name = ws["name"]
         click = f"i3-msg workspace \"{name}\""
         if ws["focused"]:
-            parts.append(f"%{{B{color}}}%{{F{text}}}%{{A1:{click}:}} {name} %{{A}}%{{B-}}%{{F-}}")
+            parts.append(f"%{{B{color}}}%{{F{text}}}%{{A1:{click}:}}%{{O12}}{name}%{{O12}}%{{A}}%{{B-}}%{{F-}}")
         elif ws["urgent"]:
-            parts.append(f"%{{B#f9e2af}}%{{F{text}}}%{{A1:{click}:}} {name} %{{A}}%{{B-}}%{{F-}}")
+            parts.append(f"%{{B#f9e2af}}%{{F{text}}}%{{A1:{click}:}}%{{O12}}{name}%{{O12}}%{{A}}%{{B-}}%{{F-}}")
         else:
-            parts.append(f"%{{B{dim(color)}}}%{{F{text}}}%{{A1:{click}:}} {name} %{{A}}%{{B-}}%{{F-}}")
-    print("".join(parts))
+            parts.append(f"%{{B{dim(color)}}}%{{F{text}}}%{{A1:{click}:}}%{{O12}}{name}%{{O12}}%{{A}}%{{B-}}%{{F-}}")
+    print("%{O6}".join(parts))
 except (json.JSONDecodeError, KeyError):
     pass
 '
@@ -483,6 +487,20 @@ EOF
 link_config "polybar/config.ini"    "$HOME/.config/polybar/config.ini"    write_polybar_config
 link_config "polybar/launch.sh"     "$HOME/.config/polybar/launch.sh"     write_polybar_launch
 link_config "polybar/workspaces.sh" "$HOME/.config/polybar/workspaces.sh" write_workspaces_script
+
+# Patch hardware-specific values — auto-detected each run, skipped if already correct
+_patch_polybar() {
+    local key="$1" val="$2" file="$CONFIGS_DIR/polybar/config.ini"
+    if grep -q "^${key}[[:space:]]*=[[:space:]]*${val}[[:space:]]*$" "$file"; then
+        skip "  polybar: $key = $val"
+    else
+        sed -i "s|^${key}[[:space:]]*=.*|${key} = ${val}|" "$file"
+        ok "  polybar: $key → $val"
+    fi
+}
+_patch_polybar "interface" "$WLAN_IFACE"
+_patch_polybar "battery"   "$BATTERY"
+_patch_polybar "card"      "$BACKLIGHT"
 
 # ── rofi ──────────────────────────────────────────────────────────────────────
 write_rofi() {
@@ -601,7 +619,7 @@ link_config "rofi/config.rasi" "$HOME/.config/rofi/config.rasi" write_rofi
 # ── i3 config ─────────────────────────────────────────────────────────────────
 write_i3() {
     cat > "$1" << 'EOF'
-# i3 config — Nord theme
+# i3 config — Tokyo Night
 # Managed by ~/.config/i3-setup/setup.sh
 
 set $mod Mod4
@@ -612,6 +630,8 @@ exec --no-startup-id dex --autostart --environment i3
 exec --no-startup-id xss-lock --transfer-sleep-lock -- i3lock --nofork
 exec --no-startup-id nm-applet
 exec --no-startup-id autorandr --change
+exec --no-startup-id copyq
+exec --no-startup-id xsettingsd
 
 exec_always --no-startup-id pkill -x picom; picom --config ~/.config/picom.conf
 exec_always --no-startup-id ~/.config/polybar/launch.sh
@@ -631,7 +651,7 @@ floating_modifier $mod
 tiling_drag modifier titlebar
 
 bindsym $mod+Return       exec xfce4-terminal
-bindsym $mod+Shift+Return exec firefox
+bindsym $mod+Shift+Return exec --no-startup-id bash -c 'pgrep -x firefox > /dev/null && i3-msg '"'"'[class="firefox"] focus'"'"' || firefox'
 bindsym $mod+Shift+q      kill
 bindsym $mod+d            exec --no-startup-id rofi -show drun
 bindsym $mod+Tab          exec --no-startup-id rofi -show window
@@ -735,6 +755,48 @@ workspace_auto_back_and_forth yes
 EOF
 }
 link_config "i3/config" "$HOME/.config/i3/config" write_i3
+
+# ── dunst ─────────────────────────────────────────────────────────────────────
+link_config "dunst/dunstrc" "$HOME/.config/dunst/dunstrc"
+if pgrep -x dunst > /dev/null 2>&1; then
+    pkill -x dunst; sleep 0.1
+    dunst &
+    ok "  dunst restarted"
+fi
+
+# ── GTK theme ─────────────────────────────────────────────────────────────────
+link_config "gtk-3.0/settings.ini" "$HOME/.config/gtk-3.0/settings.ini"
+link_config "gtkrc-2.0"            "$HOME/.gtkrc-2.0"
+link_config "xsettingsd/xsettingsd.conf" "$HOME/.config/xsettingsd/xsettingsd.conf"
+if pgrep -x xsettingsd > /dev/null 2>&1; then
+    pkill -x xsettingsd; sleep 0.1
+    xsettingsd &
+    ok "  xsettingsd restarted"
+fi
+
+# ── firefox ───────────────────────────────────────────────────────────────────
+
+FF_PROFILE=$(python3 - <<'PYEOF'
+import configparser, os, sys
+p = configparser.ConfigParser()
+p.read(os.path.expanduser("~/.mozilla/firefox/profiles.ini"))
+for s in p.sections():
+    if p.get(s, "Default", fallback="0") == "1" and p.get(s, "Path", fallback=""):
+        print(p.get(s, "Path"))
+        sys.exit(0)
+PYEOF
+)
+
+if [ -z "$FF_PROFILE" ]; then
+    warn "Could not detect Firefox default profile — skipping"
+else
+    FF_DIR="$HOME/.mozilla/firefox/$FF_PROFILE"
+    mkdir -p "$FF_DIR/chrome"
+
+    link_config "firefox/user.js"              "$FF_DIR/user.js"
+    link_config "firefox/chrome/userChrome.css"  "$FF_DIR/chrome/userChrome.css"
+    link_config "firefox/chrome/userContent.css" "$FF_DIR/chrome/userContent.css"
+fi
 
 # ════════════════════════════════════════════════════════════════════════════
 # SUMMARY

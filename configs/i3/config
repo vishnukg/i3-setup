@@ -39,6 +39,8 @@ exec --no-startup-id xss-lock --transfer-sleep-lock -- i3lock --nofork
 # and nm-applet is a desktop environment-independent system tray GUI for it.
 exec --no-startup-id nm-applet
 exec --no-startup-id autorandr --change
+exec --no-startup-id copyq
+exec --no-startup-id xsettingsd
 
 # Picom
 exec_always --no-startup-id pkill -x picom; picom --config ~/.config/picom.conf
@@ -62,7 +64,7 @@ bindsym $mod+Return exec xfce4-terminal
 
 
 # start firefox
-bindsym $mod+Shift+Return exec firefox
+bindsym $mod+Shift+Return exec --no-startup-id bash -c 'pgrep -x firefox > /dev/null && i3-msg '"'"'[class="firefox"] focus'"'"' || firefox'
 # bindsym $mod+Shift+Return exec google-chrome-stable
 
 # kill focused window

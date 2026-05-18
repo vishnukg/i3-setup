@@ -1,142 +1,125 @@
-# i3 Post-Install Setup — Changes & Fixes
+# i3 Setup
 
-## Script
+A self-contained bootstrap for a fresh i3 install on Ubuntu / Linux Mint.
+All configs live in `configs/` and are symlinked into place by `setup.sh`.
 
-Run once after a fresh i3 install:
+---
 
-```
+## Usage
+
+### Fresh install
+
+```bash
+git clone <your-repo> ~/.config/i3-setup
 ~/.config/i3-setup/setup.sh
+# Open Firefox once, then re-run to apply Firefox config:
+~/.config/i3-setup/setup.sh
+# Log out → select i3 session → log in → reboot
 ```
 
-Self-contained — installs all packages, writes polybar/rofi/picom configs,
-patches i3 config, and applies system-level fixes.
-Requires sudo (prompts automatically) for apt install and Xorg/modprobe changes.
-Idempotent — safe to re-run; already-applied steps are skipped.
-After running: reload i3 with Mod+Shift+R, then reboot.
+### Re-running
+
+`setup.sh` is idempotent — safe to re-run at any time. Each step checks before
+acting and prints `SKIP` if already applied.
 
 ---
 
-## Changes applied (2026-05-18)
+## What setup.sh does
 
-### 1. Screen tearing fix — `20-intel.conf`
-**Script:** `fix-screen-tearing.sh`
-**File:** `/usr/share/X11/xorg.conf.d/20-intel.conf`
-**What:** Enables `TearFree` and `TripleBuffer` on the Intel Arc modesetting driver.
-**Why:** Without it, screen tearing is visible in i3. picom vsync alone isn't enough at the driver level.
-**Status:** Applied. Reboot required.
+### 1. Packages
+Installs via `apt` (skips if already installed):
 
-### 2. External monitor color fix — autorandr broadcast_rgb
-**Script:** `fix-external-monitor-colors.sh`
-**File:** `~/.config/autorandr/external/config`
-**What:** Changed `x-prop-broadcast_rgb` from `Automatic` to `Full`.
-**Why:** "Automatic" causes Intel Arc to output limited color range (16–235) on HDMI/DP,
-making colors look washed out. "Full" forces the correct 0–255 range for a monitor (not a TV).
-**Status:** Applied. Takes effect next time autorandr switches to the external profile.
+| Package | Purpose |
+|---|---|
+| `i3`, `i3status`, `i3lock`, `xss-lock`, `dex` | Window manager + screen lock |
+| `xorg`, `xinit`, `x11-xserver-utils` | X11 |
+| `picom` | Compositor (rounded corners, shadows) |
+| `autorandr`, `arandr` | Multi-monitor profile switching |
+| `nitrogen` | Wallpaper |
+| `polybar`, `rofi` | Status bar + app launcher |
+| `xfce4-terminal` | Terminal |
+| `pulseaudio-utils` | Volume control via `pactl` |
+| `dunst`, `libnotify-bin` | Notifications |
+| `brightnessctl` | Brightness keys |
+| `scrot`, `curl`, `unzip` | Screenshot + download utilities |
+| `network-manager-gnome` | Network tray applet |
+| `dmz-cursor-theme` | DMZ-White cursor |
 
-### 3. WiFi sleep fix — `iwlmvm.conf`
-**Script:** `fix-wifi-sleep.sh`
-**File:** `/etc/modprobe.d/iwlmvm.conf`
-**Content:** `options iwlmvm power_scheme=1`
-**What:** Disables aggressive power management on the Intel Wi-Fi 7 (iwlmvm) module.
-**Why:** The sleep hook at `/usr/lib/systemd/system-sleep/iwlwifi.sh` unloads/reloads the
-wifi modules around suspend, but on some kernels the module reloads with power_scheme=3
-(aggressive), which causes the adapter to drop. power_scheme=1 keeps it stable.
-**Status:** Applied. Reboot required.
+### 2. FiraCode Nerd Font
+Downloads from GitHub releases and installs to `~/.local/share/fonts/FiraCode/`.
+Skipped if already installed.
 
-### 4. HiDPI cursor size fix — `.Xresources`
-**Script:** `fix-hidpi-cursor.sh`
-**File:** `~/.Xresources`
-**What:** Changed `Xcursor.size` from `40` to `80`.
-**Why:** At 144 DPI (2880x1800 display), a size-40 cursor is too small. 80 matches the
-intended size documented in the dotfiles README.
-**Status:** Applied. Run `xrdb ~/.Xresources` to apply without relog, or just relog.
+### 3. System fixes (require sudo)
 
----
+| Fix | File | Why |
+|---|---|---|
+| Screen tearing | `/usr/share/X11/xorg.conf.d/20-intel.conf` | Enables `TearFree` + `TripleBuffer` for Intel Arc modesetting driver |
+| WiFi stability | `/etc/modprobe.d/iwlmvm.conf` | `power_scheme=1` prevents Intel Wi-Fi 7 dropping after suspend |
+| Chrome apt warning | `/etc/apt/sources.list.d/google-chrome.sources` | Adds `Architectures: amd64` to suppress i386 fetch errors |
+| CPU governor | `/etc/systemd/system/cpu-performance.service` | Sets `performance` governor via systemd on boot |
+| Swappiness | `/etc/sysctl.d/99-performance.conf` | Reduces `vm.swappiness` from 60 → 10 |
 
-### 5. Chrome apt i386 warning fix
-**Script:** `fix-chrome-apt-warning.sh`
-**File:** `/etc/apt/sources.list.d/google-chrome.sources`
-**What:** Adds `Architectures: amd64` to the Chrome apt sources file.
-**Why:** Without it, apt tries to fetch i386 packages from the Chrome repo which doesn't
-provide them, producing a warning on every `apt update`.
-**Status:** Script created — run it, then verify with `sudo apt update`.
+Screen tearing and WiFi fixes require a reboot. The script will say so.
 
----
+### 4. Config symlinks
 
-## i3 config improvements (2026-05-18)
+All configs in `configs/` are symlinked to their target paths. If a real file
+already exists at the target it is backed up as `.bak` before linking.
 
-All changes are in `~/.config/i3/config`. Reload with `Mod+Shift+R` to apply
-(autorandr change only takes effect on next login).
+| configs/ path | Symlinked to |
+|---|---|
+| `.Xresources` | `~/.Xresources` |
+| `picom.conf` | `~/.config/picom.conf` |
+| `polybar/config.ini` | `~/.config/polybar/config.ini` |
+| `polybar/launch.sh` | `~/.config/polybar/launch.sh` |
+| `polybar/workspaces.sh` | `~/.config/polybar/workspaces.sh` |
+| `rofi/config.rasi` | `~/.config/rofi/config.rasi` |
+| `i3/config` | `~/.config/i3/config` |
+| `firefox/user.js` | `~/.mozilla/firefox/<profile>/user.js` |
+| `firefox/chrome/userChrome.css` | `~/.mozilla/firefox/<profile>/chrome/userChrome.css` |
+| `firefox/chrome/userContent.css` | `~/.mozilla/firefox/<profile>/chrome/userContent.css` |
 
-### 6. Fix picom duplicate instances on i3 reload
-**What:** Changed `exec_always picom -b` to `exec_always pkill -x picom; picom`.
-**Why:** `exec_always` with `-b` (daemonize) spawns a new picom on every i3 reload without
-killing the old one, causing visual glitches from multiple compositors running simultaneously.
+**Firefox note:** Firefox must have been launched at least once before running
+`setup.sh` so that the profile directory exists. If the profile isn't found,
+setup prints a warning and skips Firefox — re-run after opening Firefox once.
 
-### 7. autorandr triggered on login
-**What:** Added `exec --no-startup-id autorandr --change`.
-**Why:** Without this, autorandr profiles exist but are never activated automatically at login —
-display detection only happened manually.
+### 5. Polybar hardware detection
 
-### 8. Volume keys switched from amixer to pactl
-**What:** Replaced `amixer sset 'Master'` with `pactl set-sink-volume @DEFAULT_SINK@` for
-volume up/down/mute keys. Mic mute was already using pactl.
-**Why:** Consistency — amixer and pactl can conflict on PipeWire/PulseAudio systems. pactl
-is the correct tool for all audio control.
+After linking polybar config, setup auto-detects the current machine's hardware
+and patches `configs/polybar/config.ini` with the correct values:
 
-### 9. Screenshot keybinding
-**What:** Added `bindsym Print exec scrot ~/Pictures/screenshot-%Y-%m-%d-%H-%M-%S.png`.
-**Why:** `Print` key was unbound. Screenshots save to `~/Pictures/` with a timestamp filename.
+- **WiFi interface** — detected via `ip link` (e.g. `wlp85s0f0`)
+- **Battery** — detected via `/sys/class/power_supply/` (e.g. `BAT1`)
+- **Backlight** — detected via `/sys/class/backlight/` (e.g. `intel_backlight`)
 
-### 10. workspace_auto_back_and_forth
-**What:** Added `workspace_auto_back_and_forth yes`.
-**Why:** Pressing the same workspace key twice now jumps back to the previous workspace,
-useful for quickly toggling between two workspaces.
+Each value is skipped if already correct, so re-runs don't dirty git state.
 
 ---
 
-## Changes applied (2026-05-18, session 3 — visual refresh)
+## Key bindings
 
-### Summary
-Nord theme, polybar, rofi, FiraCode font, transparent bar, 2px blue borders.
-Rounded corners added to picom.conf — activate by switching `backend = "glx"` after reboot fixes pink lines.
-
-| File | Change |
-|------|--------|
-| `~/.config/i3/config` | Nord colors, FiraCode font, 2px borders, polybar, rofi, gaps 10/4 |
-| `~/.config/polybar/config.ini` | New — Nord themed, transparent bg, all system modules |
-| `~/.config/polybar/launch.sh` | New — multi-monitor polybar launcher |
-| `~/.config/rofi/config.rasi` | New — Nord themed with rounded corners |
-| `~/.config/picom.conf` | corner-radius = 10 (activates when backend switches to glx) |
-
----
-
-## Changes applied (2026-05-18, session 2)
-
-### 11. picom pink-lines fix — `~/.config/picom.conf`
-**What:** Switched `backend` from `glx` to `xrender`. Also set `use-damage = false` and
-`glx-no-stencil = true` (retained for if GLX is ever re-enabled).
-**Why:** picom GLX backend on Intel Arc (MTL / i915 + Mesa iris) causes pink/magenta lines
-when a browser opens. The GLX damage-based partial redraws race with browser's own GL
-rendering, leaving uninitialized RGBA buffer regions. Switching to xrender backend avoids
-the conflict entirely. Performance impact is negligible for desktop use on modern hardware.
-**Status:** Applied and picom restarted. No reboot required.
-
-### 12. Cursor size reduced — `~/.Xresources`
-**What:** Changed `Xcursor.size` from `80` to `48`.
-**Why:** 80 was too large. 48 is visible at 144 DPI without being oversized.
-**Status:** Applied (`xrdb ~/.Xresources`). New apps pick it up immediately; full effect on reboot.
+| Binding | Action |
+|---|---|
+| `Mod+Return` | Open terminal (xfce4-terminal) |
+| `Mod+Shift+Return` | Open Firefox (focuses existing window if running) |
+| `Mod+d` | App launcher (rofi) |
+| `Mod+Tab` | Window switcher (rofi) |
+| `Mod+Shift+x` | Lock screen |
+| `Mod+Shift+q` | Close window |
+| `Mod+Shift+r` | Restart i3 |
+| `Mod+Shift+e` | Exit i3 |
+| `Print` | Screenshot → `~/Pictures/` |
+| `XF86AudioRaiseVolume/LowerVolume/Mute` | Volume |
+| `XF86MonBrightnessUp/Down` | Brightness |
 
 ---
 
-## Already correctly set up (verified)
+## Hardware notes (Intel Arc / Meteor Lake)
 
-- `/usr/lib/systemd/system-sleep/iwlwifi.sh` — installed and executable (chmod 755)
-- `~/.Xresources` — loaded at login (confirmed via `xrdb -query`)
-- `picom` — running via i3 `exec_always` with glx backend + vsync, `use-damage = false`
-- `nm-applet` — running for NetworkManager tray icon
-- `autorandr` — profiles for `laptop` and `external` both present
-- `brightnessctl` — brightness keys bound in i3 config
-- `xss-lock` + `i3lock` — screen lock on suspend configured
-- CapsLock remapped to Ctrl via `setxkbmap`
-- Keyboard repeat rate set (`xset r rate 200 35`)
+- **picom backend:** `glx` with `use-damage = false`. If pink/magenta lines
+  appear after a reboot, switch to `backend = "xrender"` in `configs/picom.conf`.
+- **VA-API:** enabled in Firefox `user.js` for hardware video decoding.
+- **WebRender:** forced on in Firefox for GPU compositing — first launch compiles
+  shaders (slow once), subsequent launches use the cache.
+- **DPI:** `.Xresources` sets `Xft.dpi: 144` for the HiDPI display. Polybar
+  overrides to `dpi = 96` to prevent tray icon scaling issues.
