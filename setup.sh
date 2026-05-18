@@ -177,8 +177,22 @@ fi
 if systemctl is-active --quiet power-profiles-daemon; then
     skip "power-profiles-daemon already running"
 else
-    sudo systemctl enable --now power-profiles-daemon
-    ok "power-profiles-daemon enabled"
+    sudo systemctl unmask power-profiles-daemon 2>/dev/null || true
+    sudo systemctl enable --now power-profiles-daemon \
+        && ok "power-profiles-daemon enabled" \
+        || warn "Could not enable power-profiles-daemon — may conflict with another power manager"
+fi
+
+step "picom resume hook — restart compositor after suspend"
+PICOM_HOOK=/usr/lib/systemd/system-sleep/picom-resume.sh
+if [ -f "$PICOM_HOOK" ] && diff -q "$CONFIGS_DIR/picom-resume.sh" "$PICOM_HOOK" > /dev/null 2>&1; then
+    skip "Already installed"
+else
+    if sudo cp "$CONFIGS_DIR/picom-resume.sh" "$PICOM_HOOK" && sudo chmod +x "$PICOM_HOOK"; then
+        ok "Installed"
+    else
+        warn "Could not install picom resume hook — run setup.sh with sudo access"
+    fi
 fi
 
 step "Swappiness — reduce to 10 (was 60)"
