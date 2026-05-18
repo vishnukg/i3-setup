@@ -11,29 +11,37 @@ def dim(hex_color, factor=0.35):
     b = int(int(hex_color[5:7], 16) * factor)
     return f"#{r:02x}{g:02x}{b:02x}"
 
-workspaces = json.load(sys.stdin)
-workspaces.sort(key=lambda w: w["num"])
-parts = []
-for ws in workspaces:
-    num = min(ws["num"], len(colors) - 1)
-    color = colors[num]
-    name = ws["name"]
-    click = f"i3-msg workspace \"{name}\""
-    if ws["focused"]:
-        parts.append(f"%{{B{color}}}%{{F{text}}}%{{A1:{click}:}} {name} %{{A}}%{{B-}}%{{F-}}")
-    elif ws["urgent"]:
-        parts.append(f"%{{B#f9e2af}}%{{F{text}}}%{{A1:{click}:}} {name} %{{A}}%{{B-}}%{{F-}}")
-    else:
-        parts.append(f"%{{B{dim(color)}}}%{{F{text}}}%{{A1:{click}:}} {name} %{{A}}%{{B-}}%{{F-}}")
-print("".join(parts))
+try:
+    workspaces = json.load(sys.stdin)
+    workspaces.sort(key=lambda w: w["num"])
+    parts = []
+    for ws in workspaces:
+        num = min(ws["num"], len(colors) - 1)
+        color = colors[num]
+        name = ws["name"]
+        click = f"i3-msg workspace \"{name}\""
+        if ws["focused"]:
+            parts.append(f"%{{B{color}}}%{{F{text}}}%{{A1:{click}:}} {name} %{{A}}%{{B-}}%{{F-}}")
+        elif ws["urgent"]:
+            parts.append(f"%{{B#f9e2af}}%{{F{text}}}%{{A1:{click}:}} {name} %{{A}}%{{B-}}%{{F-}}")
+        else:
+            parts.append(f"%{{B{dim(color)}}}%{{F{text}}}%{{A1:{click}:}} {name} %{{A}}%{{B-}}%{{F-}}")
+    print("".join(parts))
+except (json.JSONDecodeError, KeyError):
+    pass
 '
 
 print_workspaces() {
-    i3-msg -t get_workspaces | python3 -c "$PYTHON_SCRIPT"
+    i3-msg -t get_workspaces 2>/dev/null | python3 -c "$PYTHON_SCRIPT" 2>/dev/null
 }
 
 print_workspaces
 
-i3-msg -t subscribe '["workspace"]' | while read -r _; do
+# Outer loop reconnects after i3 reload/restart drops the IPC subscription
+while true; do
+    i3-msg -t subscribe '["workspace"]' 2>/dev/null | while read -r _; do
+        print_workspaces
+    done
+    sleep 0.5
     print_workspaces
 done
